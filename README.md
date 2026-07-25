@@ -10,12 +10,6 @@ Windows 桌面始终置顶的轻量级待办清单应用。支持 **Electron** �
 - 待办数量徽章
 - 暗色主题
 
-## 截图
-
-| Electron 版本 | Python 版本 |
-|:---:|:---:|
-| ![Electron](screenshots/electron.png) | ![Python](screenshots/python.png) |
-
 ## 快速开始
 
 ### Electron 版本
