@@ -106,6 +106,15 @@ class TodoApp:
         except Exception:
             pass
 
+        # ── 系统托盘 + 全局快捷键 ──
+        self._tray_nid = None
+        self._old_wndproc = None
+        self._wndproc_cb = None
+        try:
+            self._setup_tray_and_hotkey()
+        except Exception:
+            pass
+
     # ── UI 构建 ──────────────────────────────────────────────
     def _build_ui(self):
         # 标题栏
@@ -295,7 +304,6 @@ class TodoApp:
         # 全局快捷键
         self.root.bind("<Escape>", lambda e: self._quit())
         self.root.bind("<Control-w>", lambda e: self._quit())
-        self.root.bind("<Control-m>", lambda e: self._minimize())
 
     # ── 窗口操作 ─────────────────────────────────────────────
     def _start_drag(self, event):
@@ -311,18 +319,97 @@ class TodoApp:
         self._drag_data["x"] = event.x_root
         self._drag_data["y"] = event.y_root
 
+    # ── 系统托盘 + 全局快捷键 (Win32) ──────────────────────
+    def _setup_tray_and_hotkey(self):
+        from ctypes import wintypes, WINFUNCTYPE, c_int64, c_uint, c_uint64
+
+        hwnd = windll.user32.GetParent(self.root.winfo_id())
+
+        # ── NOTIFYICONDATA ──
+        class NOTIFYICONDATAW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT),
+                ("uFlags", wintypes.UINT),
+                ("uCallbackMessage", wintypes.UINT),
+                ("hIcon", wintypes.HICON),
+                ("szTip", wintypes.WCHAR * 128),
+                ("dwState", wintypes.DWORD),
+                ("dwStateMask", wintypes.DWORD),
+                ("szInfo", wintypes.WCHAR * 256),
+                ("uVersion", wintypes.UINT),
+                ("szInfoTitle", wintypes.WCHAR * 64),
+                ("dwInfoFlags", wintypes.DWORD),
+                ("guidItem", ctypes.c_byte * 16),
+                ("hBalloonIcon", wintypes.HICON),
+            ]
+
+        NIF_MESSAGE = 1
+        NIF_ICON = 2
+        NIF_TIP = 4
+        WM_APP_TRAY = 0x8000 + 100
+        nid = NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        nid.hWnd = hwnd
+        nid.uID = 1
+        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+        nid.uCallbackMessage = WM_APP_TRAY
+        nid.hIcon = windll.user32.LoadIconW(0, 32512)  # IDI_APPLICATION
+        nid.szTip = "置顶待办\x00"
+        windll.shell32.Shell_NotifyIconW(0, ctypes.byref(nid))  # NIM_ADD
+        self._tray_nid = nid
+
+        # ── 全局快捷键 Ctrl+Shift+T ──
+        MOD_CONTROL = 0x0002
+        MOD_SHIFT = 0x0004
+        MOD_NOREPEAT = 0x4000
+        VK_T = 0x54
+        windll.user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_T)
+
+        # ── 窗口子类化 ──
+        GWL_WNDPROC = -4
+        WNDPROC = WINFUNCTYPE(c_int64, c_int64, c_uint, c_uint64, c_int64)
+
+        def wndproc(h, msg, wp, lp):
+            if msg == WM_APP_TRAY:
+                lo = lp & 0xFFFF
+                if lo == 0x202:  # WM_LBUTTONUP
+                    self._toggle_visibility()
+                elif lo == 0x205:  # WM_RBUTTONUP
+                    self._toggle_visibility()
+                return 0
+            if msg == 0x0312:  # WM_HOTKEY
+                self._toggle_visibility()
+                return 0
+            if msg == 0x0002:  # WM_DESTROY
+                try:
+                    windll.shell32.Shell_NotifyIconW(2, ctypes.byref(nid))  # NIM_DELETE
+                except Exception:
+                    pass
+            return windll.user32.CallWindowProcW(self._old_wndproc, h, msg, wp, lp)
+
+        self._wndproc_cb = WNDPROC(wndproc)
+        self._old_wndproc = windll.user32.SetWindowLongPtrW(hwnd, GWL_WNDPROC, self._wndproc_cb)
+
+    def _toggle_visibility(self):
+        if self.root.state() == "withdrawn" or not self.root.winfo_viewable():
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        else:
+            self.root.withdraw()
+
     def _minimize(self):
         self.root.withdraw()
-        # Windows: 显示在任务栏但不在桌面上
-        self.root.after(100, self._show_minimized)
-
-    def _show_minimized(self):
-        # 最小化到任务栏 — 使用 iconify
-        self.root.deiconify()
-        self.root.iconify()
 
     def _quit(self):
         self.store._save()
+        if self._tray_nid is not None:
+            try:
+                windll.shell32.Shell_NotifyIconW(2, ctypes.byref(self._tray_nid))  # NIM_DELETE
+            except Exception:
+                pass
         self.root.destroy()
 
     # ── 业务逻辑 ─────────────────────────────────────────────
