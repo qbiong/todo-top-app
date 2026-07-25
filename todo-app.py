@@ -96,6 +96,16 @@ class TodoApp:
         except Exception:
             pass
 
+        # ── 隐藏 Alt+Tab ──
+        try:
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            hwnd = windll.user32.GetParent(self.root.winfo_id())
+            style = windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
+        except Exception:
+            pass
+
     # ── UI 构建 ──────────────────────────────────────────────
     def _build_ui(self):
         # 标题栏
