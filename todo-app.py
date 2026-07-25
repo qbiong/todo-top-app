@@ -88,7 +88,6 @@ class TodoApp:
 
         # ── 窗口创建后应用原生样式 ──
         self.root.update_idletasks()
-        self._owner = None
         self._old_wndproc = None
         self._wndproc_cb = None
         self._apply_win32_styles()
@@ -313,35 +312,22 @@ class TodoApp:
         except Exception:
             pass
 
-        # ── 所有者窗口: 隐藏 Alt+Tab 同时保留任务栏 ──
+        # 强制任务栏图标 (WS_EX_APPWINDOW)
         try:
-            self._owner = tk.Toplevel(self.root)
-            self._owner.withdraw()
-            self._owner.overrideredirect(True)
-            self._owner.geometry("0x0+0+0")
-            self._owner.update_idletasks()
-            owner_hwnd = windll.user32.GetParent(self._owner.winfo_id())
-        except Exception:
-            owner_hwnd = None
-
-        # ── 全局快捷键 + 窗口子类化 ──
-        try:
-            self._setup_hotkey(hwnd, owner_hwnd)
+            style = windll.user32.GetWindowLongW(hwnd, -20)
+            windll.user32.SetWindowLongW(hwnd, -20, style | 0x40000)
         except Exception:
             pass
 
-    # ── 全局快捷键 + Alt+Tab 隐藏 ──────────────────────────
-    def _setup_hotkey(self, hwnd, owner_hwnd):
-        from ctypes import wintypes, WINFUNCTYPE
+        # ── 全局快捷键 ──
+        try:
+            self._setup_hotkey(hwnd)
+        except Exception:
+            pass
 
-        # ── 设置所有者窗口: 隐藏 Alt+Tab 同时保留任务栏 ──
-        if owner_hwnd:
-            try:
-                windll.user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int64]
-                windll.user32.SetWindowLongPtrW.restype = ctypes.c_int64
-                windll.user32.SetWindowLongPtrW(hwnd, -8, ctypes.c_int64(owner_hwnd))
-            except Exception:
-                pass
+    # ── 全局快捷键 ──────────────────────────────────────────
+    def _setup_hotkey(self, hwnd):
+        from ctypes import wintypes, WINFUNCTYPE
 
         # ── 全局快捷键 Ctrl+Shift+T ──
         windll.user32.RegisterHotKey(hwnd, 1, 0x4006, 0x54)
