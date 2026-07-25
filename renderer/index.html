@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+  <title>置顶待办</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- 标题栏 (拖拽区域) -->
+  <div id="titlebar">
+    <div class="titlebar-drag">
+      <span class="app-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11l3 3L22 4"/>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+        </svg>
+      </span>
+      <span class="title-text">待办清单</span>
+    </div>
+    <div class="titlebar-actions">
+      <span id="count-badge">0</span>
+      <button id="min-btn" title="最小化">─</button>
+      <button id="close-btn" title="关闭">✕</button>
+    </div>
+  </div>
+
+  <!-- 待办列表 -->
+  <div id="todo-container">
+    <ul id="todo-list">
+      <!-- 动态渲染 -->
+    </ul>
+  </div>
+
+  <!-- 快捷操作 -->
+  <div id="quick-actions">
+    <button id="clear-done-btn" title="清除已完成">清除已完成</button>
+    <span class="done-count">已完成 <span id="done-count">0</span></span>
+  </div>
+
+  <!-- 输入区域 -->
+  <div id="input-area">
+    <input type="text" id="todo-input" placeholder="输入新待办，回车添加..." maxlength="200" autofocus>
+    <button id="add-btn" title="添加">＋</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
