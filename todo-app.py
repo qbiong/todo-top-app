@@ -5,6 +5,9 @@ Python + tkinter 实现，零外部依赖
 """
 
 import os
+import sys
+import ctypes
+from ctypes import windll
 import tkinter as tk
 from tkinter import font
 
@@ -88,7 +91,7 @@ class TodoApp:
         self._tray_nid = None
         self._old_wndproc = None
         self._wndproc_cb = None
-        self._apply_win32_styles()
+        self._apply_win32_styles(ctypes.windll.user32.GetParent(self.root.winfo_id()))
 
     # ── UI 构建 ──────────────────────────────────────────────
     def _build_ui(self):
@@ -295,49 +298,40 @@ class TodoApp:
         self._drag_data["y"] = event.y_root
 
     # ── Win32 原生样式 ──────────────────────────────────────
-    def _apply_win32_styles(self):
+    def _apply_win32_styles(self, hwnd):
+        if not hwnd:
+            return
+        from ctypes import c_int, byref
+
+        # 窗口圆角 (Windows 11)
         try:
-            from ctypes import windll, c_int, byref
-            hwnd = windll.user32.GetParent(self.root.winfo_id())
-            if not hwnd:
-                return
-
-            # 窗口圆角 (Windows 11)
-            try:
-                DWMWA_WINDOW_CORNER_PREFERENCE = 33
-                DWM_WINDOW_CORNER_ROUND = 2
-                windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
-                    byref(c_int(DWM_WINDOW_CORNER_ROUND)), 4
-                )
-            except Exception:
-                pass
-
-            # 隐藏 Alt+Tab
-            try:
-                GWL_EXSTYLE = -20
-                WS_EX_TOOLWINDOW = 0x00000080
-                style = windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-                windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
-            except Exception:
-                pass
-
-            # 系统托盘 + 全局快捷键
-            try:
-                self._setup_tray_and_hotkey(hwnd)
-            except Exception:
-                pass
+            windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, byref(c_int(2)), 4
+            )
         except Exception:
+            pass
+
+        # 隐藏 Alt+Tab
+        try:
+            style = windll.user32.GetWindowLongW(hwnd, -20)
+            windll.user32.SetWindowLongW(hwnd, -20, style | 0x80)
+        except Exception:
+            pass
+
+        # 系统托盘 + 全局快捷键
+        try:
+            self._setup_tray_and_hotkey(hwnd)
+        except Exception as e:
             pass
 
     # ── 系统托盘 + 全局快捷键 (Win32) ──────────────────────
     def _setup_tray_and_hotkey(self, hwnd):
-        from ctypes import wintypes, WINFUNCTYPE, c_int64, c_uint, c_uint64
+        from ctypes import wintypes, WINFUNCTYPE
 
-        hwnd = windll.user32.GetParent(self.root.winfo_id())
+        # ── NOTIFYICONDATA (V1, 仅用基本字段) ──
+        WM_APP_TRAY = 0x8000 + 100
 
-        # ── NOTIFYICONDATA ──
-        class NOTIFYICONDATAW(ctypes.Structure):
+        class NID(ctypes.Structure):
             _pack_ = 4
             _fields_ = [
                 ("cbSize", wintypes.DWORD),
@@ -347,48 +341,36 @@ class TodoApp:
                 ("uCallbackMessage", wintypes.UINT),
                 ("hIcon", wintypes.HICON),
                 ("szTip", wintypes.WCHAR * 128),
-                ("dwState", wintypes.DWORD),
-                ("dwStateMask", wintypes.DWORD),
-                ("szInfo", wintypes.WCHAR * 256),
-                ("uVersion", wintypes.UINT),
-                ("szInfoTitle", wintypes.WCHAR * 64),
-                ("dwInfoFlags", wintypes.DWORD),
-                ("guidItem", ctypes.c_byte * 16),
-                ("hBalloonIcon", wintypes.HICON),
             ]
 
-        NIF_MESSAGE = 1
-        NIF_ICON = 2
-        NIF_TIP = 4
-        WM_APP_TRAY = 0x8000 + 100
-        nid = NOTIFYICONDATAW()
-        nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        nid = NID()
+        nid.cbSize = ctypes.sizeof(NID)
         nid.hWnd = hwnd
         nid.uID = 1
-        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
+        nid.uFlags = 1 | 2 | 4
         nid.uCallbackMessage = WM_APP_TRAY
-        nid.hIcon = windll.user32.LoadIconW(0, 32512)  # IDI_APPLICATION
+        nid.hIcon = windll.user32.LoadIconW(0, 32512)
         nid.szTip = "置顶待办\x00"
-        windll.shell32.Shell_NotifyIconW(0, ctypes.byref(nid))  # NIM_ADD
+
+        windll.shell32.Shell_NotifyIconW(0, ctypes.byref(nid))
         self._tray_nid = nid
 
         # ── 全局快捷键 Ctrl+Shift+T ──
-        MOD_CONTROL = 0x0002
-        MOD_SHIFT = 0x0004
-        MOD_NOREPEAT = 0x4000
-        VK_T = 0x54
-        windll.user32.RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_T)
+        windll.user32.RegisterHotKey(hwnd, 1, 0x4006, 0x54)
 
         # ── 窗口子类化 ──
-        GWL_WNDPROC = -4
-        WNDPROC = WINFUNCTYPE(c_int64, c_int64, c_uint, c_uint64, c_int64)
+        # 修复 64 位指针截断: 明确 argtypes/restype
+        windll.user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int64]
+        windll.user32.SetWindowLongPtrW.restype = ctypes.c_int64
+        windll.user32.CallWindowProcW.argtypes = [ctypes.c_int64, wintypes.HWND, wintypes.UINT, ctypes.c_int64, ctypes.c_int64]
+        windll.user32.CallWindowProcW.restype = ctypes.c_int64
+
+        WNDPROC = WINFUNCTYPE(ctypes.c_int64, wintypes.HWND, wintypes.UINT, ctypes.c_int64, ctypes.c_int64)
 
         def wndproc(h, msg, wp, lp):
             if msg == WM_APP_TRAY:
                 lo = lp & 0xFFFF
-                if lo == 0x202:  # WM_LBUTTONUP
-                    self._toggle_visibility()
-                elif lo == 0x205:  # WM_RBUTTONUP
+                if lo == 0x202 or lo == 0x205:  # WM_LBUTTONUP / WM_RBUTTONUP
                     self._toggle_visibility()
                 return 0
             if msg == 0x0312:  # WM_HOTKEY
@@ -396,13 +378,18 @@ class TodoApp:
                 return 0
             if msg == 0x0002:  # WM_DESTROY
                 try:
-                    windll.shell32.Shell_NotifyIconW(2, ctypes.byref(nid))  # NIM_DELETE
+                    windll.shell32.Shell_NotifyIconW(2, ctypes.byref(nid))
                 except Exception:
                     pass
-            return windll.user32.CallWindowProcW(self._old_wndproc, h, msg, wp, lp)
+            if self._old_wndproc:
+                return windll.user32.CallWindowProcW(self._old_wndproc, h, msg, wp, lp)
+            return 0
 
-        self._wndproc_cb = WNDPROC(wndproc)
-        self._old_wndproc = windll.user32.SetWindowLongPtrW(hwnd, GWL_WNDPROC, self._wndproc_cb)
+        cb = WNDPROC(wndproc)
+        self._wndproc_cb = cb
+        old = windll.user32.SetWindowLongPtrW(hwnd, -4, ctypes.cast(cb, ctypes.c_void_p).value)
+        self._old_wndproc = old
+        pass
 
     def _toggle_visibility(self):
         if self.root.state() == "withdrawn" or not self.root.winfo_viewable():
