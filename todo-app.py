@@ -368,16 +368,24 @@ class TodoApp:
         self._old_wndproc = old
 
     def _toggle_visibility(self):
-        st = self.root.state()
-        if st == "withdrawn" or st == "iconic":
-            self.root.deiconify()
-            self.root.lift()
-            self.root.focus_force()
-        else:
-            self.root.iconify()
+        try:
+            h = self._hwnd
+            if windll.user32.IsIconic(h) or not windll.user32.IsWindowVisible(h):
+                windll.user32.ShowWindow(h, 9)  # SW_RESTORE
+                windll.user32.SetForegroundWindow(h)
+            else:
+                windll.user32.ShowWindow(h, 6)  # SW_MINIMIZE
+        except Exception:
+            try:
+                self.root.iconify()
+            except Exception:
+                self.root.withdraw()
 
     def _minimize(self):
-        self.root.iconify()
+        try:
+            windll.user32.ShowWindow(self._hwnd, 6)  # SW_MINIMIZE
+        except Exception:
+            self.root.withdraw()
 
     def _quit(self):
         self.store._save()
