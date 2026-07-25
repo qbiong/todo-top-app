@@ -88,10 +88,10 @@ class TodoApp:
 
         # ── 窗口创建后应用原生样式 ──
         self.root.update_idletasks()
-        self._tray_nid = None
+        self._owner = None
         self._old_wndproc = None
         self._wndproc_cb = None
-        self._apply_win32_styles(ctypes.windll.user32.GetParent(self.root.winfo_id()))
+        self._apply_win32_styles()
 
     # ── UI 构建 ──────────────────────────────────────────────
     def _build_ui(self):
@@ -298,9 +298,11 @@ class TodoApp:
         self._drag_data["y"] = event.y_root
 
     # ── Win32 原生样式 ──────────────────────────────────────
-    def _apply_win32_styles(self, hwnd):
+    def _apply_win32_styles(self):
+        hwnd = windll.user32.GetParent(self.root.winfo_id())
         if not hwnd:
             return
+        self._hwnd = hwnd
         from ctypes import c_int, byref
 
         # 窗口圆角 (Windows 11)
@@ -311,55 +313,40 @@ class TodoApp:
         except Exception:
             pass
 
-        # 隐藏 Alt+Tab
+        # ── 所有者窗口: 隐藏 Alt+Tab 同时保留任务栏 ──
         try:
-            style = windll.user32.GetWindowLongW(hwnd, -20)
-            windll.user32.SetWindowLongW(hwnd, -20, style | 0x80)
+            self._owner = tk.Toplevel(self.root)
+            self._owner.withdraw()
+            self._owner.overrideredirect(True)
+            self._owner.geometry("0x0+0+0")
+            self._owner.update_idletasks()
+            owner_hwnd = windll.user32.GetParent(self._owner.winfo_id())
+        except Exception:
+            owner_hwnd = None
+
+        # ── 全局快捷键 + 窗口子类化 ──
+        try:
+            self._setup_hotkey(hwnd, owner_hwnd)
         except Exception:
             pass
 
-        # 系统托盘 + 全局快捷键
-        try:
-            self._setup_tray_and_hotkey(hwnd)
-        except Exception as e:
-            pass
-
-    # ── 系统托盘 + 全局快捷键 (Win32) ──────────────────────
-    def _setup_tray_and_hotkey(self, hwnd):
+    # ── 全局快捷键 + Alt+Tab 隐藏 ──────────────────────────
+    def _setup_hotkey(self, hwnd, owner_hwnd):
         from ctypes import wintypes, WINFUNCTYPE
 
-        # ── NOTIFYICONDATA (V1, 仅用基本字段) ──
-        WM_APP_TRAY = 0x8000 + 100
-
-        class NID(ctypes.Structure):
-            _pack_ = 4
-            _fields_ = [
-                ("cbSize", wintypes.DWORD),
-                ("hWnd", wintypes.HWND),
-                ("uID", wintypes.UINT),
-                ("uFlags", wintypes.UINT),
-                ("uCallbackMessage", wintypes.UINT),
-                ("hIcon", wintypes.HICON),
-                ("szTip", wintypes.WCHAR * 128),
-            ]
-
-        nid = NID()
-        nid.cbSize = ctypes.sizeof(NID)
-        nid.hWnd = hwnd
-        nid.uID = 1
-        nid.uFlags = 1 | 2 | 4
-        nid.uCallbackMessage = WM_APP_TRAY
-        nid.hIcon = windll.user32.LoadIconW(0, 32512)
-        nid.szTip = "置顶待办\x00"
-
-        windll.shell32.Shell_NotifyIconW(0, ctypes.byref(nid))
-        self._tray_nid = nid
+        # ── 设置所有者窗口: 隐藏 Alt+Tab 同时保留任务栏 ──
+        if owner_hwnd:
+            try:
+                windll.user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int64]
+                windll.user32.SetWindowLongPtrW.restype = ctypes.c_int64
+                windll.user32.SetWindowLongPtrW(hwnd, -8, ctypes.c_int64(owner_hwnd))
+            except Exception:
+                pass
 
         # ── 全局快捷键 Ctrl+Shift+T ──
         windll.user32.RegisterHotKey(hwnd, 1, 0x4006, 0x54)
 
         # ── 窗口子类化 ──
-        # 修复 64 位指针截断: 明确 argtypes/restype
         windll.user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int64]
         windll.user32.SetWindowLongPtrW.restype = ctypes.c_int64
         windll.user32.CallWindowProcW.argtypes = [ctypes.c_int64, wintypes.HWND, wintypes.UINT, ctypes.c_int64, ctypes.c_int64]
@@ -368,19 +355,9 @@ class TodoApp:
         WNDPROC = WINFUNCTYPE(ctypes.c_int64, wintypes.HWND, wintypes.UINT, ctypes.c_int64, ctypes.c_int64)
 
         def wndproc(h, msg, wp, lp):
-            if msg == WM_APP_TRAY:
-                lo = lp & 0xFFFF
-                if lo == 0x202 or lo == 0x205:  # WM_LBUTTONUP / WM_RBUTTONUP
-                    self._toggle_visibility()
-                return 0
             if msg == 0x0312:  # WM_HOTKEY
                 self._toggle_visibility()
                 return 0
-            if msg == 0x0002:  # WM_DESTROY
-                try:
-                    windll.shell32.Shell_NotifyIconW(2, ctypes.byref(nid))
-                except Exception:
-                    pass
             if self._old_wndproc:
                 return windll.user32.CallWindowProcW(self._old_wndproc, h, msg, wp, lp)
             return 0
@@ -389,26 +366,25 @@ class TodoApp:
         self._wndproc_cb = cb
         old = windll.user32.SetWindowLongPtrW(hwnd, -4, ctypes.cast(cb, ctypes.c_void_p).value)
         self._old_wndproc = old
-        pass
 
     def _toggle_visibility(self):
-        if self.root.state() == "withdrawn" or not self.root.winfo_viewable():
+        st = self.root.state()
+        if st == "withdrawn" or st == "iconic":
             self.root.deiconify()
             self.root.lift()
             self.root.focus_force()
         else:
-            self.root.withdraw()
+            self.root.iconify()
 
     def _minimize(self):
-        self.root.withdraw()
+        self.root.iconify()
 
     def _quit(self):
         self.store._save()
-        if self._tray_nid is not None:
-            try:
-                windll.shell32.Shell_NotifyIconW(2, ctypes.byref(self._tray_nid))  # NIM_DELETE
-            except Exception:
-                pass
+        try:
+            windll.user32.UnregisterHotKey(self._hwnd, 1)
+        except Exception:
+            pass
         self.root.destroy()
 
     # ── 业务逻辑 ─────────────────────────────────────────────
