@@ -83,37 +83,12 @@ class TodoApp:
         self._bind_events()
         self._refresh()
 
-        # ── 窗口圆角 (Windows 11) ──
-        try:
-            from ctypes import windll, c_int, byref
-            DWMWA_WINDOW_CORNER_PREFERENCE = 33
-            DWM_WINDOW_CORNER_ROUND = 2
-            hwnd = windll.user32.GetParent(self.root.winfo_id())
-            windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
-                byref(c_int(DWM_WINDOW_CORNER_ROUND)), 4
-            )
-        except Exception:
-            pass
-
-        # ── 隐藏 Alt+Tab ──
-        try:
-            GWL_EXSTYLE = -20
-            WS_EX_TOOLWINDOW = 0x00000080
-            hwnd = windll.user32.GetParent(self.root.winfo_id())
-            style = windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
-        except Exception:
-            pass
-
-        # ── 系统托盘 + 全局快捷键 ──
+        # ── 窗口创建后应用原生样式 ──
+        self.root.update_idletasks()
         self._tray_nid = None
         self._old_wndproc = None
         self._wndproc_cb = None
-        try:
-            self._setup_tray_and_hotkey()
-        except Exception:
-            pass
+        self._apply_win32_styles()
 
     # ── UI 构建 ──────────────────────────────────────────────
     def _build_ui(self):
@@ -319,14 +294,51 @@ class TodoApp:
         self._drag_data["x"] = event.x_root
         self._drag_data["y"] = event.y_root
 
+    # ── Win32 原生样式 ──────────────────────────────────────
+    def _apply_win32_styles(self):
+        try:
+            from ctypes import windll, c_int, byref
+            hwnd = windll.user32.GetParent(self.root.winfo_id())
+            if not hwnd:
+                return
+
+            # 窗口圆角 (Windows 11)
+            try:
+                DWMWA_WINDOW_CORNER_PREFERENCE = 33
+                DWM_WINDOW_CORNER_ROUND = 2
+                windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+                    byref(c_int(DWM_WINDOW_CORNER_ROUND)), 4
+                )
+            except Exception:
+                pass
+
+            # 隐藏 Alt+Tab
+            try:
+                GWL_EXSTYLE = -20
+                WS_EX_TOOLWINDOW = 0x00000080
+                style = windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TOOLWINDOW)
+            except Exception:
+                pass
+
+            # 系统托盘 + 全局快捷键
+            try:
+                self._setup_tray_and_hotkey(hwnd)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     # ── 系统托盘 + 全局快捷键 (Win32) ──────────────────────
-    def _setup_tray_and_hotkey(self):
+    def _setup_tray_and_hotkey(self, hwnd):
         from ctypes import wintypes, WINFUNCTYPE, c_int64, c_uint, c_uint64
 
         hwnd = windll.user32.GetParent(self.root.winfo_id())
 
         # ── NOTIFYICONDATA ──
         class NOTIFYICONDATAW(ctypes.Structure):
+            _pack_ = 4
             _fields_ = [
                 ("cbSize", wintypes.DWORD),
                 ("hWnd", wintypes.HWND),
@@ -365,7 +377,7 @@ class TodoApp:
         MOD_SHIFT = 0x0004
         MOD_NOREPEAT = 0x4000
         VK_T = 0x54
-        windll.user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_T)
+        windll.user32.RegisterHotKey(hwnd, 1, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_T)
 
         # ── 窗口子类化 ──
         GWL_WNDPROC = -4
